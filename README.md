@@ -1,15 +1,15 @@
 # Schlop's Program Files for Automatic Installation of Arch Based Distros
 
-- full-prgs.csv
+## full-prgs.csv:
   Contains all of the different applications, my reccomedation is to not use this file without commenting out parts you don't need.
-- laptop.csv
+## laptop.csv:
   Contains applications for my laptop setup.
-- nvidia-desktop.csv
+## nvidia-desktop.csv
   Contains applications and drivers for my desktop. I am using the latest nvidia drivers with all the reccomended packages,
   but it might not work outside of the box. I reccomend looking at the arch wiki nvidia page if you come into issues. https://wiki.archlinux.org/title/NVIDIA.
--pentest.csv
+## pentest.csv
   Contains pentesting and capture the flag tools and  applications for my virtual machine.
--server.csv
+## server.csv
   Contains all the neccessary applications and package for my servers.
 
   The way you the progs.csv files is by combining it with Luke Smith's larbs.sh script with the -p option.
