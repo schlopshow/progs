@@ -18,7 +18,7 @@
 
 # How to Use
 
-  Combine progs.csv file with Luke Smith's larbs.sh script with the -p option.
+  Combine progs.csv file with larbs.sh script with the -p option
 
   ```
   larbs.sh -p progs.csv
