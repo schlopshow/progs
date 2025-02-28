@@ -23,4 +23,4 @@
   ```
   larbs.sh -p progs.csv
   ```
-  Replace progs.csv with any of the csv files in the github for a different  automatic installation.
+  Replace progs.csv with any of the csv files in the github for a different automatic installation.
