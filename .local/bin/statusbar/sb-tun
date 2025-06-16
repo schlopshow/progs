@@ -1,0 +1,4 @@
+#!/bin/sh
+    # Get the tun0 IP address
+    tun0_ip=$(ip -4 addr show tun0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || echo "")
+    printf "%s%s%s\n" "$tun0_ip"

@@ -4,7 +4,7 @@
 # License: GNU GPLv3
 
 ### VARIABLES ###
-DOTFILES_REPO="https://github.com/lukesmithxyz/voidrice.git"
+DOTFILES_REPO="https://github.com/LukeSmithxyz/voidrice.git"
 PROGS_FILE="https://raw.githubusercontent.com/LukeSmithxyz/LARBS/master/static/progs.csv"
 AUR_HELPER="yay"
 REPO_BRANCH="main"

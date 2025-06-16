@@ -9,7 +9,7 @@
 ## nvidia-desktop.csv
   Contains applications and drivers for my desktop. I am using the latest nvidia drivers with all the reccomended packages,
   but it might not work outside of the box. I recommend looking at the [arch wiki](https://wiki.archlinux.org/title/NVIDIA) nvidia page if you come into issues.
-  
+
 ## pentest.csv
   Contains pentesting and capture the flag tools and  applications for my virtual machine.
 
