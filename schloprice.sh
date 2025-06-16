@@ -243,39 +243,103 @@ put_git_repo() {
 
 install_dwm_suite() {
     log "INFO" "Installing DWM suite (dwm, dmenu, dwmblocks, st)..."
-    local dwm_projects=("dwm" "dmenu" "dwmblocks" "st")
     local user_home="/home/$username"
     local src_dir="$user_home/.local/src"
 
-    # Ensure X11 development packages are installed
+    # Ensure X11 development packages are installed first
     whiptail --infobox "Installing X11 development packages..." 7 60
-    for pkg in libx11 libxft libxinerama; do
+    for pkg in libx11 libxft libxinerama libxrandr; do
         install_pkg "$pkg" || error "Failed to install $pkg"
     done
 
-    for project in "${dwm_projects[@]}"; do
-        log "INFO" "Installing $project..."
-        whiptail --infobox "Compiling and installing $project..." 7 60
-
-        local project_dir="$src_dir/$project"
-        if [ -d "$project_dir" ]; then
-            log "INFO" "Found $project in $project_dir, compiling..."
-            cd "$project_dir" || error "Cannot access $project_dir"
-
-            # Clean any previous builds
-            sudo -u "$username" make clean >/dev/null 2>&1 || true
-
-            # Compile the project
-            sudo -u "$username" make >/dev/null 2>&1 || error "Failed to compile $project"
-
-            # Install the project (requires root)
-            make install >/dev/null 2>&1 || error "Failed to install $project"
-
-            log "INFO" "$project compiled and installed successfully"
-        else
-            log "WARN" "$project directory not found at $project_dir, skipping..."
-        fi
+    # Install additional dependencies that might be needed
+    for pkg in fontconfig freetype2 gcc make; do
+        install_pkg "$pkg" || error "Failed to install $pkg"
     done
+
+    # DWM suite repositories (assuming they're part of your dotfiles or separate repos)
+    local dwm_repos=(
+        "https://git.suckless.org/dwm dwm"
+        "https://git.suckless.org/dmenu dmenu"
+        "https://git.suckless.org/st st"
+        "https://github.com/torrinfail/dwmblocks.git dwmblocks"
+    )
+
+    # Create source directory if it doesn't exist
+    sudo -u "$username" mkdir -p "$src_dir"
+
+    for repo_info in "${dwm_repos[@]}"; do
+        local repo_url=$(echo "$repo_info" | cut -d' ' -f1)
+        local project=$(echo "$repo_info" | cut -d' ' -f2)
+        local project_dir="$src_dir/$project"
+
+        log "INFO" "Installing $project..."
+        whiptail --infobox "Cloning and compiling $project..." 7 60
+
+        # First check if we have a custom version in the dotfiles
+        if [ -d "/home/$username/.config/$project" ] || [ -d "/home/$username/.$project" ]; then
+            log "INFO" "Found custom $project config, using it..."
+            local custom_dir="/home/$username/.config/$project"
+            [ ! -d "$custom_dir" ] && custom_dir="/home/$username/.$project"
+
+            if [ -f "$custom_dir/config.h" ] || [ -f "$custom_dir/Makefile" ]; then
+                sudo -u "$username" cp -r "$custom_dir" "$project_dir"
+            fi
+        fi
+
+        # Clone or update the repository
+        if [ ! -d "$project_dir" ]; then
+            sudo -u "$username" git clone --depth 1 "$repo_url" "$project_dir" 2>/dev/null || error "Failed to clone $project"
+        else
+            cd "$project_dir" && sudo -u "$username" git pull origin master >/dev/null 2>&1 || true
+        fi
+
+        cd "$project_dir" || error "Cannot access $project_dir"
+
+        # Apply any custom config.h from dotfiles if it exists
+        local config_source=""
+        if [ -f "/home/$username/.config/$project/config.h" ]; then
+            config_source="/home/$username/.config/$project/config.h"
+        elif [ -f "/home/$username/.$project/config.h" ]; then
+            config_source="/home/$username/.$project/config.h"
+        fi
+
+        if [ -n "$config_source" ] && [ -f "$config_source" ]; then
+            log "INFO" "Applying custom config for $project"
+            sudo -u "$username" cp "$config_source" "$project_dir/config.h"
+        fi
+
+        # Clean any previous builds
+        sudo -u "$username" make clean >/dev/null 2>&1 || true
+
+        # Compile the project
+        log "DEBUG" "Compiling $project..."
+        sudo -u "$username" make >/dev/null 2>&1 || error "Failed to compile $project. Check build dependencies."
+
+        # Install the project (requires root)
+        log "DEBUG" "Installing $project..."
+        make install >/dev/null 2>&1 || error "Failed to install $project"
+
+        log "INFO" "$project compiled and installed successfully"
+    done
+
+    # Create a basic xinitrc if it doesn't exist
+    local xinitrc="/home/$username/.xinitrc"
+    if [ ! -f "$xinitrc" ]; then
+        log "INFO" "Creating basic xinitrc..."
+        cat > "$xinitrc" << 'EOF'
+#!/bin/sh
+# Basic xinitrc for DWM
+
+# Start dwmblocks in background
+dwmblocks &
+
+# Start DWM
+exec dwm
+EOF
+        chmod +x "$xinitrc"
+        chown "$username:wheel" "$xinitrc"
+    fi
 
     log "INFO" "DWM suite installation completed"
 }
