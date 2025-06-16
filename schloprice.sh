@@ -4,7 +4,7 @@
 # License: GNU GPLv3
 
 ### VARIABLES ###
-DOTFILES_REPO="https://github.com/LukeSmithxyz/voidrice.git"
+DOTFILES_REPO="https://github.com/schlopshow/progs.git"
 PROGS_FILE="https://raw.githubusercontent.com/LukeSmithxyz/LARBS/master/static/progs.csv"
 AUR_HELPER="yay"
 REPO_BRANCH="main"
@@ -118,7 +118,8 @@ get_user_and_pass() {
             username=$(whiptail --nocancel --inputbox "Invalid username. Use only lowercase letters, numbers, - or _.\n\nEnter username:" 10 60 3>&1 1>&2 2>&3 3>&1)
         done
     fi
-if [ "$SKIP_PROMPTS" = true ]; then user_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-16)
+    if [ "$SKIP_PROMPTS" = true ]; then
+        user_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-16)
         log "INFO" "Generated random password (saved to $LOG_FILE)"
         echo "Generated password for $username: $user_password" >> "$LOG_FILE"
     else
@@ -240,6 +241,45 @@ put_git_repo() {
     log "INFO" "Configuration files installed"
 }
 
+install_dwm_suite() {
+    log "INFO" "Installing DWM suite (dwm, dmenu, dwmblocks, st)..."
+    local dwm_projects=("dwm" "dmenu" "dwmblocks" "st")
+    local user_home="/home/$username"
+    local src_dir="$user_home/.local/src"
+
+    # Ensure X11 development packages are installed
+    whiptail --infobox "Installing X11 development packages..." 7 60
+    for pkg in libx11 libxft libxinerama; do
+        install_pkg "$pkg" || error "Failed to install $pkg"
+    done
+
+    for project in "${dwm_projects[@]}"; do
+        log "INFO" "Installing $project..."
+        whiptail --infobox "Compiling and installing $project..." 7 60
+
+        local project_dir="$src_dir/$project"
+        if [ -d "$project_dir" ]; then
+            log "INFO" "Found $project in $project_dir, compiling..."
+            cd "$project_dir" || error "Cannot access $project_dir"
+
+            # Clean any previous builds
+            sudo -u "$username" make clean >/dev/null 2>&1 || true
+
+            # Compile the project
+            sudo -u "$username" make >/dev/null 2>&1 || error "Failed to compile $project"
+
+            # Install the project (requires root)
+            make install >/dev/null 2>&1 || error "Failed to install $project"
+
+            log "INFO" "$project compiled and installed successfully"
+        else
+            log "WARN" "$project directory not found at $project_dir, skipping..."
+        fi
+    done
+
+    log "INFO" "DWM suite installation completed"
+}
+
 setup_shell() {
     log "INFO" "Setting up shell..."
     chsh -s /bin/zsh "$username" >/dev/null 2>&1
@@ -272,10 +312,16 @@ Schloprice Installation completed: $(date)
 Repository: $DOTFILES_REPO | Branch: $REPO_BRANCH | User: $username
 Log: $LOG_FILE
 
+DWM Suite installed:
+- dwm (window manager)
+- dmenu (application launcher)
+- dwmblocks (status bar)
+- st (terminal)
+
 To start: Log in as '$username' and run 'startx'
 EOF
     chown "$username:wheel" "/home/$username/installation-report.txt"
-    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Complete!" --msgbox "Installation completed!\n\nLog in as '$username' and run 'startx'." 10 70
+    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Complete!" --msgbox "Installation completed!\n\nDWM suite has been compiled and installed.\nLog in as '$username' and run 'startx'." 12 70
     log "INFO" "Installation completed successfully!"
 }
 
@@ -293,7 +339,7 @@ main() {
     command -v "$AUR_HELPER" >/dev/null 2>&1 || { log "INFO" "Installing AUR helper: $AUR_HELPER"; manual_install "$AUR_HELPER"; }
     add_user_and_pass; echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/schloprice-temp
     installation_loop; setup_shell; put_git_repo "$DOTFILES_REPO" "/home/$username" "$REPO_BRANCH"
-    system_optimizations; setup_permissions; finalize
+    install_dwm_suite; system_optimizations; setup_permissions; finalize
     log "INFO" "All steps completed!"
 }
 
