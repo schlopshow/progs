@@ -17,35 +17,19 @@ export TERM=ansi
 
 ### UTILITY FUNCTIONS ###
 log() {
-    local level="$1"
-    shift
-    local message="$*"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-
+    local level="$1"; shift; local message="$*"; local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     case "$level" in
-        "ERROR") echo -e "\033[31m[ERROR]\033[0m $message" >&2 ;;
-        "WARN") echo -e "\033[33m[WARN]\033[0m $message" >&2 ;;
-        "INFO") echo -e "\033[32m[INFO]\033[0m $message" ;;
-        "DEBUG") [ "$VERBOSE" = true ] && echo -e "\033[36m[DEBUG]\033[0m $message" ;;
+        "ERROR") echo -e "\033[31m[ERROR]\033[0m $message" >&2; echo "[$timestamp] [ERROR] $message" >> "$LOG_FILE" ;;
+        "WARN") echo -e "\033[33m[WARN]\033[0m $message" >&2; echo "[$timestamp] [WARN] $message" >> "$LOG_FILE" ;;
+        "INFO") echo -e "\033[32m[INFO]\033[0m $message"; echo "[$timestamp] [INFO] $message" >> "$LOG_FILE" ;;
+        "DEBUG") [ "$VERBOSE" = true ] && echo -e "\033[36m[DEBUG]\033[0m $message"; echo "[$timestamp] [DEBUG] $message" >> "$LOG_FILE" ;;
     esac
-
-    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
 }
 
 error() {
     log "ERROR" "$1"
-
-    [ "$CONTINUE_ON_ERROR" = true ] && {
-        log "WARN" "Continuing despite error"
-        return 1
-    }
-
-    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Installation Error" \
-        --yesno "An error occurred: $1\n\nContinue anyway?" 12 70 && {
-        CONTINUE_ON_ERROR=true
-        return 1
-    }
-
+    [ "$CONTINUE_ON_ERROR" = true ] && { log "WARN" "Continuing despite error"; return 1; }
+    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Installation Error" --yesno "An error occurred: $1\n\nContinue anyway?" 12 70 && { CONTINUE_ON_ERROR=true; return 1; }
     exit 1
 }
 
@@ -65,92 +49,63 @@ OPTIONS:
     -v, --verbose           Enable verbose output
     -c, --continue-on-error Continue on errors
     -h, --help              Show help
+
+EXAMPLES:
+    $0 -r https://github.com/user/dotfiles.git
+    $0 --skip-prompts --user myuser
+
+PROGS.CSV FORMAT:
+    tag,program,description
+    Tags: (empty)=pacman, A=AUR, G=git, P=pip
 EOF
 }
 
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case $1 in
-            -r|--repo)
-                DOTFILES_REPO="$2"
-                shift 2
-                ;;
-            -p|--progs)
-                PROGS_FILE="$2"
-                shift 2
-                ;;
-            -a|--aur-helper)
-                AUR_HELPER="$2"
-                shift 2
-                ;;
-            -b|--branch)
-                REPO_BRANCH="$2"
-                shift 2
-                ;;
-            -u|--user)
-                USER_NAME="$2"
-                shift 2
-                ;;
-            -s|--skip-prompts)
-                SKIP_PROMPTS=true
-                shift
-                ;;
-            -v|--verbose)
-                VERBOSE=true
-                shift
-                ;;
-            -c|--continue-on-error)
-                CONTINUE_ON_ERROR=true
-                shift
-                ;;
-            -h|--help)
-                show_help
-                exit 0
-                ;;
-            *)
-                error "Unknown option: $1. Use -h for help."
-                ;;
+            -r|--repo) DOTFILES_REPO="$2"; shift 2 ;;
+            -p|--progs) PROGS_FILE="$2"; shift 2 ;;
+            -a|--aur-helper) AUR_HELPER="$2"; shift 2 ;;
+            -b|--branch) REPO_BRANCH="$2"; shift 2 ;;
+            -u|--user) USER_NAME="$2"; shift 2 ;;
+            -s|--skip-prompts) SKIP_PROMPTS=true; shift ;;
+            -v|--verbose) VERBOSE=true; shift ;;
+            -c|--continue-on-error) CONTINUE_ON_ERROR=true; shift ;;
+            -h|--help) show_help; exit 0 ;;
+            *) error "Unknown option: $1. Use -h for help." ;;
         esac
     done
 }
 
 check_requirements() {
     log "INFO" "Checking system requirements..."
-
     [[ $EUID -ne 0 ]] && error "This script must be run as root"
-
-    ! command -v pacman >/dev/null 2>&1 && \
-        error "This script requires an Arch-based Linux distribution"
-
-    ! ping -c 1 archlinux.org >/dev/null 2>&1 && \
-        error "No internet connection detected"
-
+    ! command -v pacman >/dev/null 2>&1 && error "This script requires an Arch-based Linux distribution"
+    ! ping -c 1 archlinux.org >/dev/null 2>&1 && error "No internet connection detected"
     log "INFO" "System requirements satisfied"
+}
+
+validate_repository() {
+    log "INFO" "Validating repository: $1"
+    ! git ls-remote --heads "$1" >/dev/null 2>&1 && error "Cannot access repository: $1"
+    if ! git ls-remote --heads "$1" | grep -q "refs/heads/$2"; then
+        log "WARN" "Branch '$2' not found, using default branch"
+        REPO_BRANCH=""
+    fi
+    log "INFO" "Repository validation successful"
 }
 
 install_pkg() {
     log "DEBUG" "Installing package: $1"
-
-    pacman -Qq "$1" >/dev/null 2>&1 && {
-        log "DEBUG" "$1 already installed"
-        return 0
-    }
-
-    pacman --noconfirm --needed -S "$1" >/dev/null 2>&1 || {
-        log "ERROR" "Failed to install: $1"
-        return 1
-    }
+    pacman -Qq "$1" >/dev/null 2>&1 && { log "DEBUG" "$1 already installed"; return 0; }
+    pacman --noconfirm --needed -S "$1" >/dev/null 2>&1 || { log "ERROR" "Failed to install: $1"; return 1; }
 }
 
 ### INTERACTIVE FUNCTIONS ###
 welcome_msg() {
     [ "$SKIP_PROMPTS" = true ] && return 0
-
-    whiptail --title "Welcome!" --msgbox \
-        "Welcome to Schloprice!\n\nRepository: $DOTFILES_REPO\nBranch: $REPO_BRANCH" 14 70
-
-    whiptail --title "Important Note!" --yes-button "All ready!" --no-button "Cancel" \
-        --yesno "Ensure your system has current pacman updates.\n\nContinue?" 10 70 || exit 0
+    whiptail --title "Welcome!" --msgbox "Welcome to Schloprice!\n\nRepository: $DOTFILES_REPO\nBranch: $REPO_BRANCH" 14 70
+    whiptail --title "Important Note!" --yes-button "All ready!" --no-button "Cancel" --yesno "Ensure your system has current pacman updates.\n\nContinue?" 10 70 || exit 0
 }
 
 get_user_and_pass() {
@@ -159,374 +114,232 @@ get_user_and_pass() {
         log "INFO" "Using provided username: $USER_NAME"
     else
         username=$(whiptail --inputbox "Enter username:" 10 60 3>&1 1>&2 2>&3 3>&1) || exit 0
-
         while ! echo "$username" | grep -q "^[a-z_][a-z0-9_-]*$"; do
-            username=$(whiptail --nocancel --inputbox \
-                "Invalid username. Use only lowercase letters, numbers, - or _.\n\nEnter username:" \
-                10 60 3>&1 1>&2 2>&3 3>&1)
+            username=$(whiptail --nocancel --inputbox "Invalid username. Use only lowercase letters, numbers, - or _.\n\nEnter username:" 10 60 3>&1 1>&2 2>&3 3>&1)
         done
     fi
-
     if [ "$SKIP_PROMPTS" = true ]; then
         user_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-16)
         log "INFO" "Generated random password (saved to $LOG_FILE)"
         echo "Generated password for $username: $user_password" >> "$LOG_FILE"
     else
-        user_password=$(whiptail --nocancel --passwordbox \
-            "Enter password for $username:" 10 60 3>&1 1>&2 2>&3 3>&1)
-
-        local pass2=$(whiptail --nocancel --passwordbox \
-            "Retype password:" 10 60 3>&1 1>&2 2>&3 3>&1)
-
+        user_password=$(whiptail --nocancel --passwordbox "Enter password for $username:" 10 60 3>&1 1>&2 2>&3 3>&1)
+        local pass2=$(whiptail --nocancel --passwordbox "Retype password:" 10 60 3>&1 1>&2 2>&3 3>&1)
         while [ "$user_password" != "$pass2" ]; do
-            user_password=$(whiptail --nocancel --passwordbox \
-                "Passwords don't match. Enter again:" 10 60 3>&1 1>&2 2>&3 3>&1)
-            pass2=$(whiptail --nocancel --passwordbox \
-                "Retype password:" 10 60 3>&1 1>&2 2>&3 3>&1)
+            user_password=$(whiptail --nocancel --passwordbox "Passwords don't match. Enter again:" 10 60 3>&1 1>&2 2>&3 3>&1)
+            pass2=$(whiptail --nocancel --passwordbox "Retype password:" 10 60 3>&1 1>&2 2>&3 3>&1)
         done
     fi
 }
 
 user_check() {
     if id -u "$username" >/dev/null 2>&1; then
-        [ "$SKIP_PROMPTS" = true ] && {
-            log "WARN" "User $username exists, will overwrite settings"
-            return 0
-        }
-
-        whiptail --title "WARNING" --yes-button "CONTINUE" --no-button "Cancel" \
-            --yesno "User \`$username\` exists. This will OVERWRITE conflicting settings.\n\nContinue?" \
-            12 70 || exit 0
+        [ "$SKIP_PROMPTS" = true ] && { log "WARN" "User $username exists, will overwrite settings"; return 0; }
+        whiptail --title "WARNING" --yes-button "CONTINUE" --no-button "Cancel" --yesno "User \`$username\` exists. This will OVERWRITE conflicting settings.\n\nContinue?" 12 70 || exit 0
     fi
+}
+
+pre_install_msg() {
+    [ "$SKIP_PROMPTS" = true ] && { log "INFO" "Starting automated installation..."; return 0; }
+    whiptail --title "Ready!" --yes-button "Let's go!" --no-button "Cancel" --yesno "Ready to install.\n\nRepo: $DOTFILES_REPO\nUser: $username\nAUR: $AUR_HELPER\n\nContinue?" 14 70 || exit 0
 }
 
 ### INSTALLATION FUNCTIONS ###
 add_user_and_pass() {
     log "INFO" "Adding user: $username"
     whiptail --infobox "Adding user \"$username\"..." 7 50
-
-    useradd -m -g wheel -s /bin/zsh "$username" >/dev/null 2>&1 || {
-        usermod -a -G wheel "$username"
-        mkdir -p "/home/$username"
-        chown "$username:wheel" "/home/$username"
-    }
-
+    useradd -m -g wheel -s /bin/zsh "$username" >/dev/null 2>&1 || { usermod -a -G wheel "$username"; mkdir -p "/home/$username"; chown "$username:wheel" "/home/$username"; }
     export repo_dir="/home/$username/.local/src"
     mkdir -p "$repo_dir" && chown -R "$username:wheel" "$(dirname "$repo_dir")"
-
     echo "$username:$user_password" | chpasswd && unset user_password
     log "INFO" "User $username created successfully"
 }
 
 refresh_keys() {
     log "INFO" "Refreshing package keys..."
-
     case "$(readlink -f /sbin/init)" in
-        *systemd*)
-            whiptail --infobox "Refreshing Arch Keyring..." 7 40
-            install_pkg archlinux-keyring || error "Failed to refresh keyring"
-            ;;
-        *)
-            whiptail --infobox "Enabling Arch repositories..." 7 40
-            install_pkg artix-keyring || error "Failed to install Artix keyring"
-            install_pkg artix-archlinux-support || error "Failed to install Arch support"
-
-            ! grep -q "^\[extra\]" /etc/pacman.conf && \
-                echo -e "\n[extra]\nInclude = /etc/pacman.d/mirrorlist-arch" >> /etc/pacman.conf
-
-            pacman -Sy --noconfirm >/dev/null 2>&1
-            pacman-key --populate archlinux >/dev/null 2>&1
-            ;;
+    *systemd*) whiptail --infobox "Refreshing Arch Keyring..." 7 40; install_pkg archlinux-keyring || error "Failed to refresh keyring" ;;
+    *) whiptail --infobox "Enabling Arch repositories..." 7 40
+       install_pkg artix-keyring || error "Failed to install Artix keyring"
+       install_pkg artix-archlinux-support || error "Failed to install Arch support"
+       ! grep -q "^\[extra\]" /etc/pacman.conf && echo -e "\n[extra]\nInclude = /etc/pacman.d/mirrorlist-arch" >> /etc/pacman.conf
+       pacman -Sy --noconfirm >/dev/null 2>&1; pacman-key --populate archlinux >/dev/null 2>&1 ;;
     esac
 }
 
-install_aur_helper() {
-    command -v "$AUR_HELPER" >/dev/null 2>&1 && {
-        log "INFO" "$AUR_HELPER already installed"
-        return 0
-    }
-
-    log "INFO" "Installing AUR helper: $AUR_HELPER"
-    whiptail --infobox "Installing AUR helper: $AUR_HELPER..." 7 50
-
-    # Install dependencies
-    log "DEBUG" "Installing prerequisites for AUR helper"
-    for pkg in git base-devel go; do
-        install_pkg "$pkg" || error "Failed to install $pkg"
-    done
-
-    # Create build directory in user's home
-    local build_dir="/home/$username/.cache/yay-build"
-    sudo -u "$username" mkdir -p "$build_dir"
-
-    # Clone and build as user
-    local aur_url="https://aur.archlinux.org/${AUR_HELPER}.git"
-
-    # Use a here-document to run commands as user
-    sudo -u "$username" bash << EOF
-set -e
-cd "$build_dir"
-
-# Remove any existing directory
-rm -rf "${AUR_HELPER}"
-
-# Clone the repository
-git clone --depth 1 "$aur_url" "${AUR_HELPER}" || exit 1
-cd "${AUR_HELPER}" || exit 1
-
-# Build the package
-makepkg -si --noconfirm --needed || exit 1
-
-# Cleanup
-cd /
-rm -rf "$build_dir"
-EOF
-
-    # Check if installation was successful
-    if ! command -v "$AUR_HELPER" >/dev/null 2>&1; then
-        error "Failed to install $AUR_HELPER - binary not found after build"
-    fi
-
-    log "INFO" "$AUR_HELPER installed successfully"
+manual_install() {
+    pacman -Qq "$1" >/dev/null 2>&1 && return 0
+    log "INFO" "Manually installing: $1"
+    whiptail --infobox "Installing \"$1\" manually..." 7 50
+    sudo -u "$username" mkdir -p "$repo_dir/$1"
+    sudo -u "$username" git -C "$repo_dir" clone --depth 1 -q "https://aur.archlinux.org/$1.git" "$repo_dir/$1" 2>/dev/null ||
+        { cd "$repo_dir/$1" && sudo -u "$username" git pull --force origin master >/dev/null 2>&1; } || error "Failed to clone: $1"
+    cd "$repo_dir/$1" && sudo -u "$username" makepkg --noconfirm -si >/dev/null 2>&1 || error "Failed to build: $1"
 }
 
-install_programs() {
-    # Detect progs file
-    [ -n "$PROGS_FILE" ] || {
-        local temp_repo_dir=$(mktemp -d)
-        local clone_args="--depth 1 -q"
-        [ -n "$REPO_BRANCH" ] && clone_args="$clone_args -b $REPO_BRANCH"
+main_install() { log "INFO" "Installing: $1 ($current_package of $total_packages)"; whiptail --title "Progress" --infobox "Installing \`$1\` ($current_package of $total_packages)\\n$2" 8 70; install_pkg "$1" || error "Failed to install: $1"; }
 
-        if git clone $clone_args "$DOTFILES_REPO" "$temp_repo_dir" >/dev/null 2>&1 && \
-           [ -f "$temp_repo_dir/progs.csv" ]; then
-            PROGS_FILE="$temp_repo_dir/progs.csv"
-            log "INFO" "Found progs.csv in repository"
-        else
-            log "WARN" "No progs.csv found, skipping software installation"
-            return 0
-        fi
-    }
+git_make_install() {
+    local progname="${1##*/}"; progname="${progname%.git}"; local dir="$repo_dir/$progname"
+    log "INFO" "Installing from git: $progname ($current_package of $total_packages)"
+    whiptail --title "Progress" --infobox "Installing \`$progname\` via git\\n$2" 8 70
+    sudo -u "$username" git -C "$repo_dir" clone --depth 1 -q "$1" "$dir" 2>/dev/null || { cd "$dir" && sudo -u "$username" git pull --force origin master >/dev/null 2>&1; } || error "Failed to clone: $1"
+    cd "$dir" && make >/dev/null 2>&1 && make install >/dev/null 2>&1 || error "Failed to compile/install: $progname"
+}
 
-    # Download or copy progs file
-    [[ "$PROGS_FILE" =~ ^https?:// ]] && \
-        curl -Ls "$PROGS_FILE" | sed '/^#/d' > /tmp/progs.csv || \
-        cp "$PROGS_FILE" /tmp/progs.csv
+aur_install() {
+    log "INFO" "Installing from AUR: $1 ($current_package of $total_packages)"
+    whiptail --title "Progress" --infobox "Installing \`$1\` from AUR\\n$2" 8 70
+    echo "$aur_installed" | grep -q "^$1$" && return 0
+    sudo -u "$username" "$AUR_HELPER" -S --noconfirm "$1" >/dev/null 2>&1 || error "Failed to install AUR: $1"
+}
 
+pip_install() {
+    log "INFO" "Installing Python: $1 ($current_package of $total_packages)"
+    whiptail --title "Progress" --infobox "Installing Python \`$1\`\\n$2" 8 70
+    command -v pip >/dev/null 2>&1 || install_pkg python-pip || error "Failed to install pip"
+    pip install --break-system-packages "$1" >/dev/null 2>&1 || error "Failed to install Python: $1"
+}
+
+detect_progs_file() {
+    [ -n "$PROGS_FILE" ] && return 0
+    local temp_repo_dir=$(mktemp -d)
+    local clone_args="--depth 1 -q"; [ -n "$REPO_BRANCH" ] && clone_args="$clone_args -b $REPO_BRANCH"
+    if git clone $clone_args "$DOTFILES_REPO" "$temp_repo_dir" >/dev/null 2>&1 && [ -f "$temp_repo_dir/progs.csv" ]; then
+        PROGS_FILE="$temp_repo_dir/progs.csv"; log "INFO" "Found progs.csv in repository"
+    else
+        log "WARN" "No progs.csv found, skipping software installation"; PROGS_FILE=""
+    fi
+    [ "$PROGS_FILE" != "$temp_repo_dir/progs.csv" ] && rm -rf "$temp_repo_dir"
+}
+
+installation_loop() {
+    detect_progs_file; [ -z "$PROGS_FILE" ] && { log "WARN" "No programs file, skipping software installation"; return 0; }
+    [[ "$PROGS_FILE" =~ ^https?:// ]] && curl -Ls "$PROGS_FILE" | sed '/^#/d' > /tmp/progs.csv || cp "$PROGS_FILE" /tmp/progs.csv
     sed -i '/^#/d; /^$/d' /tmp/progs.csv
-
-    local total_packages=$(wc -l < /tmp/progs.csv)
-    local current_package=0
+    total_packages=$(wc -l < /tmp/progs.csv); aur_installed=$(pacman -Qqm 2>/dev/null || echo ""); current_package=0
     log "INFO" "Installing $total_packages packages..."
-
     while IFS=, read -r tag program comment; do
-        current_package=$((current_package + 1))
-        comment="$(echo "$comment" | sed -E 's/(^"|"$)//g')"
-        log "INFO" "Installing: $program ($current_package of $total_packages)"
-        whiptail --title "Progress" --infobox \
-            "Installing \`$program\` ($current_package of $total_packages)\\n$comment" 8 70
-
+        current_package=$((current_package + 1)); comment="$(echo "$comment" | sed -E 's/(^"|"$)//g')"
         case "$tag" in
-            "A")
-                sudo -u "$username" "$AUR_HELPER" -S --noconfirm "$program" >/dev/null 2>&1 || \
-                    error "Failed to install AUR: $program"
-                ;;
-            "G")
-                local progname="${program##*/}"
-                progname="${progname%.git}"
-                local dir="$repo_dir/$progname"
-
-                sudo -u "$username" git clone --depth 1 -q "$program" "$dir" >/dev/null 2>&1 || {
-                    cd "$dir" && sudo -u "$username" git pull --force origin master >/dev/null 2>&1
-                } || error "Failed to clone: $program"
-
-                cd "$dir" && make >/dev/null 2>&1 && make install >/dev/null 2>&1 || \
-                    error "Failed to compile/install: $progname"
-                ;;
-            "P")
-                command -v pip >/dev/null 2>&1 || install_pkg python-pip || \
-                    error "Failed to install pip"
-
-                pip install --break-system-packages "$program" >/dev/null 2>&1 || \
-                    error "Failed to install Python: $program"
-                ;;
-            *)
-                install_pkg "$program" || error "Failed to install: $program"
-                ;;
+            "A") aur_install "$program" "$comment" ;;
+            "G") git_make_install "$program" "$comment" ;;
+            "P") pip_install "$program" "$comment" ;;
+            *) main_install "$program" "$comment" ;;
         esac
     done < /tmp/progs.csv
-
     log "INFO" "Package installation completed"
 }
 
-install_dotfiles() {
-    log "INFO" "Installing configuration files..."
-    whiptail --infobox "Installing config files..." 7 60
-
-    local temp_dir=$(mktemp -d)
-    local clone_args="--depth 1 -q --recursive"
-    [ -n "$REPO_BRANCH" ] && clone_args="$clone_args -b $REPO_BRANCH"
-
-    sudo -u "$username" git clone $clone_args "$DOTFILES_REPO" "$temp_dir" >/dev/null 2>&1 || \
-        error "Failed to clone: $DOTFILES_REPO"
-
-    rm -rf "$temp_dir"/.git* "$temp_dir"/README.md "$temp_dir"/LICENSE \
-           "$temp_dir"/FUNDING.yml "$temp_dir"/progs.csv
-
-    sudo -u "$username" cp -rfT "$temp_dir" "/home/$username" && rm -rf "$temp_dir"
+put_git_repo() {
+    log "INFO" "Installing configuration files..."; whiptail --infobox "Installing config files..." 7 60
+    local temp_dir=$(mktemp -d); [ ! -d "$2" ] && mkdir -p "$2"; chown "$username:wheel" "$temp_dir" "$2"
+    local clone_args="--depth 1 -q --recursive"; [ -n "$3" ] && clone_args="$clone_args -b $3"
+    sudo -u "$username" git clone $clone_args "$1" "$temp_dir" 2>/dev/null || error "Failed to clone: $1"
+    rm -rf "$temp_dir/.git" "$temp_dir/.gitignore" "$temp_dir/README.md" "$temp_dir/LICENSE" "$temp_dir/FUNDING.yml" "$temp_dir/progs.csv"
+    sudo -u "$username" cp -rfT "$temp_dir" "$2" && rm -rf "$temp_dir"
     log "INFO" "Configuration files installed"
 }
 
 install_dwm_suite() {
-    log "INFO" "Installing DWM suite..."
-    local src_dir="$repo_dir"
+    log "INFO" "Installing DWM suite (dwm, dmenu, dwmblocks, st)..."
+    local dwm_projects=("dwm" "dmenu" "dwmblocks" "st")
+    local user_home="/home/$username"
+    local src_dir="$user_home/.local/src"
 
-    # Install X11 development packages
-    for pkg in libx11 libxft libxinerama libxrandr fontconfig freetype2 gcc make; do
+    # Ensure X11 development packages are installed
+    whiptail --infobox "Installing X11 development packages..." 7 60
+    for pkg in libx11 libxft libxinerama; do
         install_pkg "$pkg" || error "Failed to install $pkg"
     done
 
-    # DWM suite repositories
-    local dwm_repos=(
-        "https://git.suckless.org/dwm"
-        "https://git.suckless.org/dmenu"
-        "https://git.suckless.org/st"
-        "https://github.com/torrinfail/dwmblocks.git"
-    )
-
-    sudo -u "$username" mkdir -p "$src_dir"
-
-    for repo_url in "${dwm_repos[@]}"; do
-        local project="${repo_url##*/}"
-        project="${project%.git}"
-        local project_dir="$src_dir/$project"
-
+    for project in "${dwm_projects[@]}"; do
         log "INFO" "Installing $project..."
-        whiptail --infobox "Compiling $project..." 7 60
+        whiptail --infobox "Compiling and installing $project..." 7 60
 
-        # Clone or update
-        if [ ! -d "$project_dir" ]; then
-            sudo -u "$username" git clone --depth 1 "$repo_url" "$project_dir" >/dev/null 2>&1 || \
-                error "Failed to clone $project"
+        local project_dir="$src_dir/$project"
+        if [ -d "$project_dir" ]; then
+            log "INFO" "Found $project in $project_dir, compiling..."
+            cd "$project_dir" || error "Cannot access $project_dir"
+
+            # Clean any previous builds
+            sudo -u "$username" make clean >/dev/null 2>&1 || true
+
+            # Compile the project
+            sudo -u "$username" make >/dev/null 2>&1 || error "Failed to compile $project"
+
+            # Install the project (requires root)
+            make install >/dev/null 2>&1 || error "Failed to install $project"
+
+            log "INFO" "$project compiled and installed successfully"
         else
-            cd "$project_dir" && \
-                sudo -u "$username" git pull origin master >/dev/null 2>&1 || true
+            log "WARN" "$project directory not found at $project_dir, skipping..."
         fi
-
-        cd "$project_dir" || error "Cannot access $project_dir"
-
-        # Apply custom config if exists
-        for config_path in "/home/$username/.config/$project/config.h" \
-                          "/home/$username/.$project/config.h"; do
-            [ -f "$config_path" ] && \
-                sudo -u "$username" cp "$config_path" "$project_dir/config.h" && break
-        done
-
-        # Compile and install
-        sudo -u "$username" make clean >/dev/null 2>&1 || true
-        sudo -u "$username" make >/dev/null 2>&1 || error "Failed to compile $project"
-        make install >/dev/null 2>&1 || error "Failed to install $project"
-        log "INFO" "$project installed successfully"
     done
-
-    # Create xinitrc
-    [ ! -f "/home/$username/.xinitrc" ] && \
-        cat > "/home/$username/.xinitrc" << 'EOF' && \
-        chown "$username:wheel" "/home/$username/.xinitrc" && \
-        chmod +x "/home/$username/.xinitrc"
-#!/bin/sh
-dwmblocks &
-exec dwm
-EOF
 
     log "INFO" "DWM suite installation completed"
 }
 
-finalize_setup() {
-    log "INFO" "Finalizing setup..."
-
-    # Shell setup
+setup_shell() {
+    log "INFO" "Setting up shell..."
     chsh -s /bin/zsh "$username" >/dev/null 2>&1
-    sudo -u "$username" mkdir -p "/home/$username"/.{cache/zsh,config,local/bin}
+    sudo -u "$username" mkdir -p "/home/$username/.cache/zsh/" "/home/$username/.config" "/home/$username/.local/bin"
     command -v dash >/dev/null 2>&1 && ln -sfT /bin/dash /bin/sh >/dev/null 2>&1
+}
 
-    # System optimizations
-    ! grep -q "ILoveCandy" /etc/pacman.conf && \
-        sed -i "/#VerbosePkgLists/a ILoveCandy" /etc/pacman.conf
-
+system_optimizations() {
+    log "INFO" "Applying optimizations..."
+    ! grep -q "ILoveCandy" /etc/pacman.conf && sed -i "/#VerbosePkgLists/a ILoveCandy" /etc/pacman.conf
     sed -Ei "s/^#(ParallelDownloads).*/\1 = 5/;/^#Color$/s/#//" /etc/pacman.conf
     sed -i "s/-j2/-j$(nproc)/;/^#MAKEFLAGS/s/^#//" /etc/makepkg.conf
+    rmmod pcspkr 2>/dev/null || true; echo "blacklist pcspkr" > /etc/modprobe.d/nobeep.conf
+}
 
-    rmmod pcspkr 2>/dev/null || true
-    echo "blacklist pcspkr" > /etc/modprobe.d/nobeep.conf
-
-    # Permissions
+setup_permissions() {
+    log "INFO" "Setting up permissions..."
     echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/00-wheel-can-sudo
-
     cat > /etc/sudoers.d/01-cmds-without-password << 'EOF'
 %wheel ALL=(ALL:ALL) NOPASSWD: /usr/bin/shutdown,/usr/bin/reboot,/usr/bin/systemctl suspend,/usr/bin/mount,/usr/bin/umount,/usr/bin/pacman -Syu,/usr/bin/pacman -Syyu,/usr/bin/pacman -Syyu --noconfirm,/usr/bin/loadkeys,/usr/bin/yay,/usr/bin/paru
 EOF
-
     echo "Defaults editor=/usr/bin/nvim" > /etc/sudoers.d/02-visudo-editor
-    mkdir -p /etc/sysctl.d
-    echo "kernel.dmesg_restrict = 0" > /etc/sysctl.d/dmesg.conf
+    mkdir -p /etc/sysctl.d; echo "kernel.dmesg_restrict = 0" > /etc/sysctl.d/dmesg.conf
+}
 
-    # Cleanup
-    rm -f /etc/sudoers.d/schloprice-temp /tmp/progs.csv
-
-    # Final report
+finalize() {
+    log "INFO" "Finalizing..."; rm -f /etc/sudoers.d/schloprice-temp
     cat > "/home/$username/installation-report.txt" << EOF
 Schloprice Installation completed: $(date)
 Repository: $DOTFILES_REPO | Branch: $REPO_BRANCH | User: $username
 Log: $LOG_FILE
 
+DWM Suite installed:
+- dwm (window manager)
+- dmenu (application launcher)
+- dwmblocks (status bar)
+- st (terminal)
+
 To start: Log in as '$username' and run 'startx'
 EOF
     chown "$username:wheel" "/home/$username/installation-report.txt"
-
-    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Complete!" --msgbox \
-        "Installation completed!\n\nLog in as '$username' and run 'startx'." 12 70
-
+    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Complete!" --msgbox "Installation completed!\n\nDWM suite has been compiled and installed.\nLog in as '$username' and run 'startx'." 12 70
     log "INFO" "Installation completed successfully!"
 }
 
+cleanup() { rm -f /tmp/progs.csv /etc/sudoers.d/schloprice-temp /tmp/progs_validation.csv; }
+trap cleanup EXIT
+
 ### MAIN ###
 main() {
-    echo "Starting Schloprice... Log: $LOG_FILE"
-    parse_arguments "$@"
-    check_requirements
-
-    # Install whiptail first
+    echo "Starting Schloprice..."; echo "Log: $LOG_FILE"
+    parse_arguments "$@"; check_requirements; validate_repository "$DOTFILES_REPO" "$REPO_BRANCH"
     install_pkg libnewt || error "Failed to install whiptail"
-
-    # Interactive setup
-    welcome_msg
-    get_user_and_pass
-    user_check
-
-    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Ready!" \
-        --yes-button "Let's go!" --no-button "Cancel" \
-        --yesno "Ready to install.\n\nRepo: $DOTFILES_REPO\nUser: $username\nAUR: $AUR_HELPER\n\nContinue?" \
-        14 70 || exit 0
-
-    log "INFO" "Starting installation..."
-    refresh_keys
-
-    # Install base packages
-    for pkg in curl ca-certificates base-devel git zsh; do
-        install_pkg "$pkg" || error "Failed to install: $pkg"
-    done
-
-    # Setup user and temporary sudo
-    add_user_and_pass
-    echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/schloprice-temp
-
-    # Install AUR helper, programs, dotfiles, and DWM
-    install_aur_helper
-    install_programs
-    install_dotfiles
-    install_dwm_suite
-    finalize_setup
-
+    welcome_msg; get_user_and_pass; user_check; pre_install_msg
+    log "INFO" "Starting installation..."; refresh_keys
+    for pkg in curl ca-certificates base-devel git zsh; do install_pkg "$pkg" || error "Failed to install: $pkg"; done
+    command -v "$AUR_HELPER" >/dev/null 2>&1 || { log "INFO" "Installing AUR helper: $AUR_HELPER"; manual_install "$AUR_HELPER"; }
+    add_user_and_pass; echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/schloprice-temp
+    installation_loop; setup_shell; put_git_repo "$DOTFILES_REPO" "/home/$username" "$REPO_BRANCH"
+    install_dwm_suite; system_optimizations; setup_permissions; finalize
     log "INFO" "All steps completed!"
 }
 
