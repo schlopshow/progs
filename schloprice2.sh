@@ -173,34 +173,35 @@ refresh_keys() {
 }
 
 install_aur_helper() {
+    # Check if AUR helper is already installed
+    pacman -Qq "$AUR_HELPER" >/dev/null 2>&1 && {
+        log "INFO" "$AUR_HELPER already installed, setting up configuration..."
+        # Configure AUR helper for development packages if it's yay
+        [ "$AUR_HELPER" = "yay" ] && sudo -u "$username" "$AUR_HELPER" -Y --save --devel >/dev/null 2>&1
+        return 0
+    }
+
     log "INFO" "Installing AUR helper: $AUR_HELPER"
-    whiptail --infobox "Installing AUR helper: $AUR_HELPER..." 7 50
+    whiptail --infobox "Installing \"$AUR_HELPER\" manually." 7 50
 
-    case "$AUR_HELPER" in
-        "yay")
-            local aur_url="https://aur.archlinux.org/yay.git"
-            ;;
-        "paru")
-            local aur_url="https://github.com/morganamilo/paru.git"
-            ;;
-        *)
-            error "Unsupported AUR helper: $AUR_HELPER"
-            ;;
-    esac
+    # Create AUR helper directory
+    sudo -u "$username" mkdir -p "$repo_dir/$AUR_HELPER"
 
-    local helper_dir="$repo_dir/$AUR_HELPER"
-
-    # Create directory and clone
-    sudo -u "$username" mkdir -p "$helper_dir"
-    sudo -u "$username" git clone --depth 1 -q "$aur_url" "$helper_dir" 2>/dev/null || {
-        cd "$helper_dir" && sudo -u "$username" git pull --force origin master >/dev/null 2>&1
-    } || error "Failed to clone $AUR_HELPER repository"
+    # Clone the repository
+    sudo -u "$username" git -C "$repo_dir" clone --depth 1 --single-branch \
+        --no-tags -q "https://aur.archlinux.org/$AUR_HELPER.git" "$repo_dir/$AUR_HELPER" || {
+            cd "$repo_dir/$AUR_HELPER" || error "Cannot access $repo_dir/$AUR_HELPER"
+            sudo -u "$username" git pull --force origin master >/dev/null 2>&1
+        } || error "Failed to clone $AUR_HELPER repository"
 
     # Build and install
-    cd "$helper_dir" || error "Cannot access $helper_dir"
+    cd "$repo_dir/$AUR_HELPER" || error "Cannot access $repo_dir/$AUR_HELPER"
     sudo -u "$username" makepkg --noconfirm -si >/dev/null 2>&1 || error "Failed to build and install $AUR_HELPER"
 
-    log "INFO" "$AUR_HELPER installed successfully"
+    # Configure AUR helper for development packages if it's yay
+    [ "$AUR_HELPER" = "yay" ] && sudo -u "$username" "$AUR_HELPER" -Y --save --devel >/dev/null 2>&1
+
+    log "INFO" "$AUR_HELPER installed and configured successfully"
 }
 
 manual_install() {
