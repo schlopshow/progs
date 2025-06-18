@@ -172,55 +172,6 @@ refresh_keys() {
     esac
 }
 
-install_aur_helper() {
-    # Check if AUR helper is already installed
-    pacman -Qq "$AUR_HELPER" >/dev/null 2>&1 && {
-        log "INFO" "$AUR_HELPER already installed, setting up configuration..."
-        # Configure AUR helper for development packages if it's yay
-        [ "$AUR_HELPER" = "yay" ] && sudo -u "$username" "$AUR_HELPER" -Y --save --devel >/dev/null 2>&1
-        return 0
-    }
-
-    log "INFO" "Installing AUR helper: $AUR_HELPER"
-    whiptail --infobox "Installing \"$AUR_HELPER\" manually." 7 50
-
-    # Ensure repo_dir exists and has proper ownership
-    sudo -u "$username" mkdir -p "$repo_dir"
-
-    # Create AUR helper directory with full path
-    local aur_helper_dir="$repo_dir/$AUR_HELPER"
-    sudo -u "$username" mkdir -p "$aur_helper_dir"
-
-    log "DEBUG" "Cloning $AUR_HELPER to $aur_helper_dir"
-
-    # Clone the repository
-    if sudo -u "$username" git clone --depth 1 --single-branch \
-        --no-tags -q "https://aur.archlinux.org/$AUR_HELPER.git" "$aur_helper_dir" 2>/dev/null; then
-        log "DEBUG" "Successfully cloned $AUR_HELPER repository"
-    else
-        log "WARN" "Clone failed, trying to update existing repository"
-        if [ -d "$aur_helper_dir/.git" ]; then
-            cd "$aur_helper_dir" || error "Cannot access $aur_helper_dir"
-            sudo -u "$username" git pull --force origin master >/dev/null 2>&1 || error "Failed to update $AUR_HELPER repository"
-        else
-            error "Failed to clone $AUR_HELPER repository and no existing repo found"
-        fi
-    fi
-
-    # Build and install
-    cd "$aur_helper_dir" || error "Cannot access $aur_helper_dir"
-    log "DEBUG" "Building $AUR_HELPER in $(pwd)"
-
-    # Make sure we have the PKGBUILD file
-    [ ! -f "PKGBUILD" ] && error "PKGBUILD not found in $aur_helper_dir"
-
-    sudo -u "$username" makepkg --noconfirm -si >/dev/null 2>&1 || error "Failed to build and install $AUR_HELPER"
-
-    # Configure AUR helper for development packages if it's yay
-    [ "$AUR_HELPER" = "yay" ] && sudo -u "$username" "$AUR_HELPER" -Y --save --devel >/dev/null 2>&1
-
-    log "INFO" "$AUR_HELPER installed and configured successfully"
-}
 
 manual_install() {
     pacman -Qq "$1" >/dev/null 2>&1 && return 0
