@@ -173,14 +173,21 @@ refresh_keys() {
 }
 
 
-manual_install() {
-    pacman -Qq "$1" >/dev/null 2>&1 && return 0
-    log "INFO" "Manually installing: $1"
-    whiptail --infobox "Installing \"$1\" manually..." 7 50
-    sudo -u "$username" mkdir -p "$repo_dir/$1"
-    sudo -u "$username" git -C "$repo_dir" clone --depth 1 -q "https://aur.archlinux.org/$1.git" "$repo_dir/$1" 2>/dev/null ||
-        { cd "$repo_dir/$1" && sudo -u "$username" git pull --force origin master >/dev/null 2>&1; } || error "Failed to clone: $1"
-    cd "$repo_dir/$1" && sudo -u "$username" makepkg --noconfirm -si >/dev/null 2>&1 || error "Failed to build: $1"
+manualinstall() {
+	# Installs $1 manually. Used only for AUR helper here.
+	# Should be run after repodir is created and var is set.
+	pacman -Qq "$1" && return 0
+	whiptail --infobox "Installing \"$1\" manually." 7 50
+	sudo -u "$name" mkdir -p "$repodir/$1"
+	sudo -u "$name" git -C "$repodir" clone --depth 1 --single-branch \
+		--no-tags -q "https://aur.archlinux.org/$1.git" "$repodir/$1" ||
+		{
+			cd "$repodir/$1" || return 1
+			sudo -u "$name" git pull --force origin master
+		}
+	cd "$repodir/$1" || exit 1
+	sudo -u "$name" \
+		makepkg --noconfirm -si >/dev/null 2>&1 || return 1
 }
 
 main_install() { log "INFO" "Installing: $1 ($current_package of $total_packages)"; whiptail --title "Progress" --infobox "Installing \`$1\` ($current_package of $total_packages)\\n$2" 8 70; install_pkg "$1" || error "Failed to install: $1"; }
@@ -194,10 +201,10 @@ git_make_install() {
 }
 
 aur_install() {
-    log "INFO" "Installing from AUR: $1 ($current_package of $total_packages)"
-    whiptail --title "Progress" --infobox "Installing \`$1\` from AUR\\n$2" 8 70
-    echo "$aur_installed" | grep -q "^$1$" && return 0
-    sudo -u "$username" "$AUR_HELPER" -S --noconfirm "$1" >/dev/null 2>&1 || error "Failed to install AUR: $1"
+	whiptail --title "LARBS Installation" \
+		--infobox "Installing \`$1\` ($n of $total) from the AUR. $1 $2" 9 70
+	echo "$aurinstalled" | grep -q "^$1$" && return 1
+	sudo -u "$name" $aurhelper -S --noconfirm "$1" >/dev/null 2>&1
 }
 
 pip_install() {
