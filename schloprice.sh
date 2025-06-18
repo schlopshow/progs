@@ -42,7 +42,7 @@ USAGE: $0 [OPTIONS]
 OPTIONS:
     -r, --repo URL          Dotfiles repository URL
     -p, --progs FILE/URL    Programs CSV file path or URL
-    -a, --aur-helper NAME   AUR helper (default: yay)
+    -a, --aur-helper NAME   AUR helper (yay or paru, default: yay)
     -b, --branch NAME       Repository branch (default: main)
     -u, --user USERNAME     Username (skip prompt)
     -s, --skip-prompts      Skip all prompts
@@ -52,7 +52,7 @@ OPTIONS:
 
 EXAMPLES:
     $0 -r https://github.com/user/dotfiles.git
-    $0 --skip-prompts --user myuser
+    $0 --skip-prompts --user myuser --aur-helper paru
 
 PROGS.CSV FORMAT:
     tag,program,description
@@ -65,7 +65,12 @@ parse_arguments() {
         case $1 in
             -r|--repo) DOTFILES_REPO="$2"; shift 2 ;;
             -p|--progs) PROGS_FILE="$2"; shift 2 ;;
-            -a|--aur-helper) AUR_HELPER="$2"; shift 2 ;;
+            -a|--aur-helper)
+                case "$2" in
+                    yay|paru) AUR_HELPER="$2" ;;
+                    *) error "Unsupported AUR helper: $2. Use 'yay' or 'paru'." ;;
+                esac
+                shift 2 ;;
             -b|--branch) REPO_BRANCH="$2"; shift 2 ;;
             -u|--user) USER_NAME="$2"; shift 2 ;;
             -s|--skip-prompts) SKIP_PROMPTS=true; shift ;;
@@ -104,7 +109,7 @@ install_pkg() {
 ### INTERACTIVE FUNCTIONS ###
 welcome_msg() {
     [ "$SKIP_PROMPTS" = true ] && return 0
-    whiptail --title "Welcome!" --msgbox "Welcome to Schloprice!\n\nRepository: $DOTFILES_REPO\nBranch: $REPO_BRANCH" 14 70
+    whiptail --title "Welcome!" --msgbox "Welcome to Schloprice!\n\nRepository: $DOTFILES_REPO\nBranch: $REPO_BRANCH\nAUR Helper: $AUR_HELPER" 14 70
     whiptail --title "Important Note!" --yes-button "All ready!" --no-button "Cancel" --yesno "Ensure your system has current pacman updates.\n\nContinue?" 10 70 || exit 0
 }
 
@@ -165,6 +170,56 @@ refresh_keys() {
        ! grep -q "^\[extra\]" /etc/pacman.conf && echo -e "\n[extra]\nInclude = /etc/pacman.d/mirrorlist-arch" >> /etc/pacman.conf
        pacman -Sy --noconfirm >/dev/null 2>&1; pacman-key --populate archlinux >/dev/null 2>&1 ;;
     esac
+}
+
+install_aur_helper() {
+    # Check if AUR helper is already installed
+    pacman -Qq "$AUR_HELPER" >/dev/null 2>&1 && {
+        log "INFO" "$AUR_HELPER already installed, setting up configuration..."
+        # Configure AUR helper for development packages if it's yay
+        [ "$AUR_HELPER" = "yay" ] && sudo -u "$username" "$AUR_HELPER" -Y --save --devel >/dev/null 2>&1
+        return 0
+    }
+
+    log "INFO" "Installing AUR helper: $AUR_HELPER"
+    whiptail --infobox "Installing \"$AUR_HELPER\" manually." 7 50
+
+    # Ensure repo_dir exists and has proper ownership
+    sudo -u "$username" mkdir -p "$repo_dir"
+
+    # Create AUR helper directory with full path
+    local aur_helper_dir="$repo_dir/$AUR_HELPER"
+    sudo -u "$username" mkdir -p "$aur_helper_dir"
+
+    log "DEBUG" "Cloning $AUR_HELPER to $aur_helper_dir"
+
+    # Clone the repository
+    if sudo -u "$username" git clone --depth 1 --single-branch \
+        --no-tags -q "https://aur.archlinux.org/$AUR_HELPER.git" "$aur_helper_dir" 2>/dev/null; then
+        log "DEBUG" "Successfully cloned $AUR_HELPER repository"
+    else
+        log "WARN" "Clone failed, trying to update existing repository"
+        if [ -d "$aur_helper_dir/.git" ]; then
+            cd "$aur_helper_dir" || error "Cannot access $aur_helper_dir"
+            sudo -u "$username" git pull --force origin master >/dev/null 2>&1 || error "Failed to update $AUR_HELPER repository"
+        else
+            error "Failed to clone $AUR_HELPER repository and no existing repo found"
+        fi
+    fi
+
+    # Build and install
+    cd "$aur_helper_dir" || error "Cannot access $aur_helper_dir"
+    log "DEBUG" "Building $AUR_HELPER in $(pwd)"
+
+    # Make sure we have the PKGBUILD file
+    [ ! -f "PKGBUILD" ] && error "PKGBUILD not found in $aur_helper_dir"
+
+    sudo -u "$username" makepkg --noconfirm -si >/dev/null 2>&1 || error "Failed to build and install $AUR_HELPER"
+
+    # Configure AUR helper for development packages if it's yay
+    [ "$AUR_HELPER" = "yay" ] && sudo -u "$username" "$AUR_HELPER" -Y --save --devel >/dev/null 2>&1
+
+    log "INFO" "$AUR_HELPER installed and configured successfully"
 }
 
 manual_install() {
@@ -310,7 +365,7 @@ finalize() {
     cat > "/home/$username/installation-report.txt" << EOF
 Schloprice Installation completed: $(date)
 Repository: $DOTFILES_REPO | Branch: $REPO_BRANCH | User: $username
-Log: $LOG_FILE
+AUR Helper: $AUR_HELPER | Log: $LOG_FILE
 
 DWM Suite installed:
 - dwm (window manager)
@@ -321,7 +376,7 @@ DWM Suite installed:
 To start: Log in as '$username' and run 'startx'
 EOF
     chown "$username:wheel" "/home/$username/installation-report.txt"
-    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Complete!" --msgbox "Installation completed!\n\nDWM suite has been compiled and installed.\nLog in as '$username' and run 'startx'." 12 70
+    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Complete!" --msgbox "Installation completed!\n\nAUR Helper: $AUR_HELPER\nDWM suite has been compiled and installed.\nLog in as '$username' and run 'startx'." 12 70
     log "INFO" "Installation completed successfully!"
 }
 
@@ -336,7 +391,10 @@ main() {
     welcome_msg; get_user_and_pass; user_check; pre_install_msg
     log "INFO" "Starting installation..."; refresh_keys
     for pkg in curl ca-certificates base-devel git zsh; do install_pkg "$pkg" || error "Failed to install: $pkg"; done
-    command -v "$AUR_HELPER" >/dev/null 2>&1 || { log "INFO" "Installing AUR helper: $AUR_HELPER"; manual_install "$AUR_HELPER"; }
+
+    # Install AUR helper if not present
+    command -v "$AUR_HELPER" >/dev/null 2>&1 || install_aur_helper
+
     add_user_and_pass; echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/schloprice-temp
     installation_loop; setup_shell; put_git_repo "$DOTFILES_REPO" "/home/$username" "$REPO_BRANCH"
     install_dwm_suite; system_optimizations; setup_permissions; finalize
