@@ -42,7 +42,6 @@ USAGE: $0 [OPTIONS]
 OPTIONS:
     -r, --repo URL          Dotfiles repository URL
     -p, --progs FILE/URL    Programs CSV file path or URL
-    -a, --aur-helper NAME   AUR helper (yay or paru, default: yay)
     -b, --branch NAME       Repository branch (default: main)
     -u, --user USERNAME     Username (skip prompt)
     -s, --skip-prompts      Skip all prompts
@@ -52,7 +51,7 @@ OPTIONS:
 
 EXAMPLES:
     $0 -r https://github.com/user/dotfiles.git
-    $0 --skip-prompts --user myuser --aur-helper paru
+    $0 --skip-prompts --user myuser
 
 PROGS.CSV FORMAT:
     tag,program,description
@@ -65,12 +64,6 @@ parse_arguments() {
         case $1 in
             -r|--repo) DOTFILES_REPO="$2"; shift 2 ;;
             -p|--progs) PROGS_FILE="$2"; shift 2 ;;
-            -a|--aur-helper)
-                case "$2" in
-                    yay|paru) AUR_HELPER="$2" ;;
-                    *) error "Unsupported AUR helper: $2. Use 'yay' or 'paru'." ;;
-                esac
-                shift 2 ;;
             -b|--branch) REPO_BRANCH="$2"; shift 2 ;;
             -u|--user) USER_NAME="$2"; shift 2 ;;
             -s|--skip-prompts) SKIP_PROMPTS=true; shift ;;
@@ -109,7 +102,7 @@ install_pkg() {
 ### INTERACTIVE FUNCTIONS ###
 welcome_msg() {
     [ "$SKIP_PROMPTS" = true ] && return 0
-    whiptail --title "Welcome!" --msgbox "Welcome to Schloprice!\n\nRepository: $DOTFILES_REPO\nBranch: $REPO_BRANCH\nAUR Helper: $AUR_HELPER" 14 70
+    whiptail --title "Welcome!" --msgbox "Welcome to Schloprice!\n\nRepository: $DOTFILES_REPO\nBranch: $REPO_BRANCH\nAUR Helper: yay" 14 70
     whiptail --title "Important Note!" --yes-button "All ready!" --no-button "Cancel" --yesno "Ensure your system has current pacman updates.\n\nContinue?" 10 70 || exit 0
 }
 
@@ -146,7 +139,7 @@ user_check() {
 
 pre_install_msg() {
     [ "$SKIP_PROMPTS" = true ] && { log "INFO" "Starting automated installation..."; return 0; }
-    whiptail --title "Ready!" --yes-button "Let's go!" --no-button "Cancel" --yesno "Ready to install.\n\nRepo: $DOTFILES_REPO\nUser: $username\nAUR: $AUR_HELPER\n\nContinue?" 14 70 || exit 0
+    whiptail --title "Ready!" --yes-button "Let's go!" --no-button "Cancel" --yesno "Ready to install.\n\nRepo: $DOTFILES_REPO\nUser: $username\nAUR: yay\n\nContinue?" 14 70 || exit 0
 }
 
 ### INSTALLATION FUNCTIONS ###
@@ -172,25 +165,25 @@ refresh_keys() {
     esac
 }
 
-
-manualinstall() {
-	# Installs $1 manually. Used only for AUR helper here.
-	# Should be run after repodir is created and var is set.
-	pacman -Qq "$1" && return 0
-	whiptail --infobox "Installing \"$1\" manually." 7 50
-	sudo -u "$name" mkdir -p "$repodir/$1"
-	sudo -u "$name" git -C "$repodir" clone --depth 1 --single-branch \
-		--no-tags -q "https://aur.archlinux.org/$1.git" "$repodir/$1" ||
-		{
-			cd "$repodir/$1" || return 1
-			sudo -u "$name" git pull --force origin master
-		}
-	cd "$repodir/$1" || exit 1
-	sudo -u "$name" \
-		makepkg --noconfirm -si >/dev/null 2>&1 || return 1
+install_yay() {
+    command -v yay >/dev/null 2>&1 && return 0
+    whiptail --infobox "Installing yay AUR helper..." 7 50
+    yay_dir="/tmp/yay-install"
+    rm -rf "$yay_dir"
+    mkdir -p "$yay_dir"
+    git clone --depth 1 "https://aur.archlinux.org/yay.git" "$yay_dir"
+    cd "$yay_dir"
+    chown -R "$username:wheel" "$yay_dir"
+    sudo -u "$username" makepkg -si --noconfirm
+    cd /
+    rm -rf "$yay_dir"
 }
 
-main_install() { log "INFO" "Installing: $1 ($current_package of $total_packages)"; whiptail --title "Progress" --infobox "Installing \`$1\` ($current_package of $total_packages)\\n$2" 8 70; install_pkg "$1" || error "Failed to install: $1"; }
+main_install() {
+    log "INFO" "Installing: $1 ($current_package of $total_packages)"
+    whiptail --title "Progress" --infobox "Installing \`$1\` ($current_package of $total_packages)\\n$2" 8 70
+    install_pkg "$1" || error "Failed to install: $1"
+}
 
 git_make_install() {
     local progname="${1##*/}"; progname="${progname%.git}"; local dir="$repo_dir/$progname"
@@ -201,10 +194,14 @@ git_make_install() {
 }
 
 aur_install() {
-	whiptail --title "LARBS Installation" \
-		--infobox "Installing \`$1\` ($n of $total) from the AUR. $1 $2" 9 70
-	echo "$aurinstalled" | grep -q "^$1$" && return 1
-	sudo -u "$name" $aurhelper -S --noconfirm "$1" >/dev/null 2>&1
+    log "INFO" "Installing AUR: $1 ($current_package of $total_packages)"
+    whiptail --title "Progress" --infobox "Installing \`$1\` ($current_package of $total_packages) from the AUR\\n$2" 9 70
+
+    # Check if already installed
+    echo "$aur_installed" | grep -q "^$1$" && return 0
+
+    # Install using yay as the user
+    sudo -u "$username" yay -S --noconfirm "$1" >/dev/null 2>&1 || error "Failed to install AUR package: $1"
 }
 
 pip_install() {
@@ -312,7 +309,7 @@ setup_permissions() {
     log "INFO" "Setting up permissions..."
     echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/00-wheel-can-sudo
     cat > /etc/sudoers.d/01-cmds-without-password << 'EOF'
-%wheel ALL=(ALL:ALL) NOPASSWD: /usr/bin/shutdown,/usr/bin/reboot,/usr/bin/systemctl suspend,/usr/bin/mount,/usr/bin/umount,/usr/bin/pacman -Syu,/usr/bin/pacman -Syyu,/usr/bin/pacman -Syyu --noconfirm,/usr/bin/loadkeys,/usr/bin/yay,/usr/bin/paru
+%wheel ALL=(ALL:ALL) NOPASSWD: /usr/bin/shutdown,/usr/bin/reboot,/usr/bin/systemctl suspend,/usr/bin/mount,/usr/bin/umount,/usr/bin/pacman -Syu,/usr/bin/pacman -Syyu,/usr/bin/pacman -Syyu --noconfirm,/usr/bin/loadkeys,/usr/bin/yay
 EOF
     echo "Defaults editor=/usr/bin/nvim" > /etc/sudoers.d/02-visudo-editor
     mkdir -p /etc/sysctl.d; echo "kernel.dmesg_restrict = 0" > /etc/sysctl.d/dmesg.conf
@@ -323,7 +320,7 @@ finalize() {
     cat > "/home/$username/installation-report.txt" << EOF
 Schloprice Installation completed: $(date)
 Repository: $DOTFILES_REPO | Branch: $REPO_BRANCH | User: $username
-AUR Helper: $AUR_HELPER | Log: $LOG_FILE
+AUR Helper: yay | Log: $LOG_FILE
 
 DWM Suite installed:
 - dwm (window manager)
@@ -334,7 +331,7 @@ DWM Suite installed:
 To start: Log in as '$username' and run 'startx'
 EOF
     chown "$username:wheel" "/home/$username/installation-report.txt"
-    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Complete!" --msgbox "Installation completed!\n\nAUR Helper: $AUR_HELPER\nDWM suite has been compiled and installed.\nLog in as '$username' and run 'startx'." 12 70
+    [ "$SKIP_PROMPTS" = false ] && whiptail --title "Complete!" --msgbox "Installation completed!\n\nAUR Helper: yay\nDWM suite has been compiled and installed.\nLog in as '$username' and run 'startx'." 12 70
     log "INFO" "Installation completed successfully!"
 }
 
@@ -350,10 +347,11 @@ main() {
     log "INFO" "Starting installation..."; refresh_keys
     for pkg in curl ca-certificates base-devel git zsh; do install_pkg "$pkg" || error "Failed to install: $pkg"; done
 
-    # Install AUR helper if not present
-    command -v "$AUR_HELPER" >/dev/null 2>&1 || install_aur_helper
-
     add_user_and_pass; echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/schloprice-temp
+
+    # Install yay AUR helper
+    install_yay
+
     installation_loop; setup_shell; put_git_repo "$DOTFILES_REPO" "/home/$username" "$REPO_BRANCH"
     install_dwm_suite; system_optimizations; setup_permissions; finalize
     log "INFO" "All steps completed!"
