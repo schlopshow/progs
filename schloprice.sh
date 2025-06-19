@@ -5,7 +5,7 @@
 
 ### VARIABLES ###
 DOTFILES_REPO="https://github.com/schlopshow/progs.git"
-PROGS_FILE="https://raw.githubusercontent.com/LukeSmithxyz/LARBS/master/static/progs.csv"
+PROGS_FILE="https://raw.githubusercontent.com/schlopshow/schloprice/refs/heads/main/progs/full-progs.csv"
 AUR_HELPER="yay"
 REPO_BRANCH="main"
 USER_NAME=""
